@@ -1,8 +1,8 @@
 import * as THREE from './three.js';
-import { buildChurch, BOUNDS, ALTAR_Z, SPAWN } from './church.js';
-import { createAvatar, AVATAR_OPTIONS, randomAvatar } from './avatar.js';
-import { verseForToday } from './verses.js';
-import { createStore } from './store.js';
+import { buildChurch, BOUNDS, ALTAR_Z, SPAWN } from './church.js?v=3';
+import { createAvatar, AVATAR_OPTIONS, randomAvatar } from './avatar.js?v=3';
+import { verseForToday } from './verses.js?v=3';
+import { createStore } from './store.js?v=3';
 
 const CFG = window.CHURCH_CONFIG || {};
 const $ = (s) => document.querySelector(s);
@@ -268,7 +268,7 @@ $('#enter').addEventListener('click', () => {
     if (isTouch) hint.textContent = 'Drag to look · joystick to walk · tap the Bible or a wall';
     setTimeout(() => { hint.style.opacity = 0; }, 7000);
     if (store && store.mode === 'demo') $('#demo-banner').hidden = false;
-    setTimeout(() => { $('#demo-banner').hidden = true; }, 8000);
+    setTimeout(() => { if (!(store && store.connectError)) $('#demo-banner').hidden = true; }, 8000);
     if (store) notifyPrayedForMe();
     handlePendingOpen();
   }
@@ -516,6 +516,11 @@ createStore().then(async (s) => {
     if (enteredAt) notifyPrayedForMe();
   });
   store.onPresence(syncOthers);
+  if (store.connectError) {
+    // live mode was configured but couldn't connect: say so instead of silently pretending
+    $('#demo-banner').textContent = `Couldn't connect to the prayer database (${store.connectError}). Prayers are only saved on this device — try reloading.`;
+    $('#demo-banner').classList.add('error');
+  }
   if (enteredAt && store.mode === 'demo') $('#demo-banner').hidden = false;
   if (sharedPrivateId) await openSharedLink(sharedPrivateId);
   if (hashParams.has('whoami')) copyText(store.userId, `Your user ID was copied: ${store.userId}`);

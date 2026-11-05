@@ -274,7 +274,12 @@ export async function createStore() {
   const cfg = window.CHURCH_CONFIG || {};
   if (cfg.firebase) {
     try { const s = new FirebaseStore(cfg.firebase); await s.init(); return s; }
-    catch (err) { console.error('Firebase failed, falling back to demo mode', err); }
+    catch (err) {
+      console.error('Firebase failed, falling back to demo mode', err);
+      const s = new LocalStore(); await s.init();
+      s.connectError = (err && (err.code || err.message)) || 'unknown error';
+      return s;
+    }
   }
   const s = new LocalStore(); await s.init(); return s;
 }

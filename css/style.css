@@ -122,3 +122,4 @@ textarea { resize: none; }
 .mine-summary { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--gold-soft); font-size: 14px; }
 .prayer.highlight { box-shadow: 0 0 0 3px var(--gold); }
 #private-link { font-size: 13px; color: var(--muted); }
+.demo-banner.error { background: rgba(142, 27, 34, .95); color: #fff; white-space: normal; text-align: center; width: max-content; max-width: calc(100% - 32px); border-radius: 12px; }
