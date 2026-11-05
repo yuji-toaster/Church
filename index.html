@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Metaverse Church</title>
+  <meta name="description" content="Walk through our church, share prayer requests, celebrate answered prayers, and read today's verse." />
+  <meta name="theme-color" content="#1c140e" />
+  <!-- Link preview card for KakaoTalk / other chats. Scrapers need ABSOLUTE urls:
+       change these if you host somewhere other than GitHub Pages. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Metaverse Church" />
+  <meta property="og:description" content="Come in, pick your avatar, and pray with us. A new Bible verse every day." />
+  <meta property="og:image" content="https://yuji-toaster.github.io/Church/assets/og.jpg" />
+  <meta property="og:url" content="https://yuji-toaster.github.io/Church/" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="config.js"></script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="loading" class="loading">
+    <div class="loading-cross"></div>
+    <p>Opening the doors…</p>
+  </div>
+
+  <!-- HUD -->
+  <header class="hud-top" hidden>
+    <div class="brand">
+      <strong id="church-name">Metaverse Church</strong>
+      <span id="online" class="online"><i></i><span id="online-count">1</span> here now</span>
+    </div>
+    <nav class="hud-buttons">
+      <button data-open="verse" aria-label="Today's verse"><span aria-hidden="true">📖</span><em>Verse</em></button>
+      <button data-open="prayers" aria-label="Prayer wall"><span aria-hidden="true">🙏</span><em>Prayers</em></button>
+      <button data-open="avatar" aria-label="Change avatar"><span aria-hidden="true">🧍</span><em>Avatar</em></button>
+      <button data-open="share" aria-label="Invite friends"><span aria-hidden="true">🔗</span><em>Invite</em></button>
+    </nav>
+  </header>
+  <div id="demo-banner" class="demo-banner" hidden>Demo mode — prayers are saved on this device only.</div>
+
+  <button id="interact" class="interact" hidden></button>
+  <p id="hint" class="hint" hidden>Drag to look around · <span class="kbd">WASD</span> / joystick to walk · tap the Bible or a wall</p>
+
+  <div id="joystick" class="joystick" hidden><div class="stick"></div></div>
+
+  <!-- Avatar picker -->
+  <section id="panel-avatar" class="sheet sheet-left" hidden>
+    <h1 class="welcome">Welcome</h1>
+    <p class="muted">Choose how you'll appear to others in the church.</p>
+    <label class="field">Your name
+      <input id="name" maxlength="24" autocomplete="nickname" placeholder="e.g. Grace" />
+    </label>
+    <div class="field">Outfit <div class="swatches" data-key="outfit"></div></div>
+    <div class="field">Skin <div class="swatches" data-key="skin"></div></div>
+    <div class="field">Hair <div class="swatches" data-key="hair"></div></div>
+    <div class="field">Style <div class="chips" data-key="style"></div></div>
+    <div class="field">Accessory <div class="chips" data-key="accessory"></div></div>
+    <button id="enter" class="primary">Enter the church</button>
+  </section>
+
+  <!-- Verse -->
+  <section id="panel-verse" class="sheet" hidden>
+    <button class="close" aria-label="Close">×</button>
+    <p class="eyebrow">Today's Word · <span id="verse-date"></span></p>
+    <blockquote id="verse-text"></blockquote>
+    <p id="verse-ref" class="ref"></p>
+    <div class="row">
+      <button id="share-verse" class="primary">Share this verse</button>
+    </div>
+    <p class="muted small">A new verse rises from the Bible every day.</p>
+  </section>
+
+  <!-- Prayers -->
+  <section id="panel-prayers" class="sheet tall" hidden>
+    <button class="close" aria-label="Close">×</button>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="active" class="on">Requests</button>
+      <button role="tab" data-tab="answered">Answered 🙌</button>
+      <button role="tab" data-tab="mine">Mine</button>
+      <button role="tab" data-tab="review" hidden>Review</button>
+    </div>
+    <p id="mine-summary" class="mine-summary" hidden></p>
+    <form id="prayer-form" class="prayer-form">
+      <textarea id="prayer-text" maxlength="500" rows="3" placeholder="What can we pray for?" required></textarea>
+      <div class="visibility" role="radiogroup" aria-label="Who can see this">
+        <label><input type="radio" name="visibility" value="public" checked /><span><b>🌍 Everyone</b><small>On the Prayer Wall for the whole church</small></span></label>
+        <label><input type="radio" name="visibility" value="private" /><span><b>🔒 Only people I choose</b><small>You get a private link to send them</small></span></label>
+      </div>
+      <div class="row between">
+        <label class="check"><input type="checkbox" id="anon" /> Hide my name (anonymous)</label>
+        <button class="primary" type="submit">Share request</button>
+      </div>
+    </form>
+    <ul id="prayer-list" class="prayer-list"></ul>
+  </section>
+
+  <!-- Private link -->
+  <section id="panel-private" class="sheet" hidden>
+    <button class="close" aria-label="Close">×</button>
+    <h2>🔒 Private request saved</h2>
+    <p class="muted">It isn't on the Prayer Wall. Send this link only to the people you want praying with you. You'll see how many of them prayed.</p>
+    <input id="private-link" readonly />
+    <div class="row">
+      <button id="private-send" class="primary">Send in KakaoTalk / share</button>
+      <button id="private-copy" class="secondary">Copy link</button>
+    </div>
+    <p class="muted small">Anyone who has this link can read the request, so only send it to people you trust. You can delete the request at any time.</p>
+  </section>
+
+  <!-- Mark answered -->
+  <section id="panel-answer" class="sheet" hidden>
+    <button class="close" aria-label="Close">×</button>
+    <h2>Prayer answered!</h2>
+    <p class="muted">Share how God answered, so others can rejoice with you (optional).</p>
+    <textarea id="testimony" maxlength="500" rows="4" placeholder="What happened?"></textarea>
+    <div class="row"><button id="confirm-answer" class="primary">Move to Answered</button></div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
