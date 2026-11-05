@@ -517,16 +517,22 @@ createStore().then(async (s) => {
   });
   store.onPresence(syncOthers);
   if (enteredAt && store.mode === 'demo') $('#demo-banner').hidden = false;
-  if (sharedPrivateId) {
-    const ok = await store.openPrivate(sharedPrivateId);
-    history.replaceState(null, '', location.pathname + location.search);
-    pendingOpen = ok ? sharedPrivateId : 'missing';
-    if (enteredAt) handlePendingOpen();
-  }
+  if (sharedPrivateId) await openSharedLink(sharedPrivateId);
   if (hashParams.has('whoami')) copyText(store.userId, `Your user ID was copied: ${store.userId}`);
 }).catch(err);
 
 let pendingOpen = null;
+async function openSharedLink(id) {
+  const ok = await store.openPrivate(id);
+  history.replaceState(null, '', location.pathname + location.search);
+  pendingOpen = ok ? id : 'missing';
+  if (enteredAt) handlePendingOpen();
+}
+// a private link tapped while the church is already open only changes the hash
+window.addEventListener('hashchange', () => {
+  const id = new URLSearchParams(location.hash.slice(1)).get('p');
+  if (id && store) openSharedLink(id).catch(err);
+});
 function handlePendingOpen() {
   if (!pendingOpen) return;
   if (pendingOpen === 'missing') toast('That private prayer link has expired or was deleted.');
