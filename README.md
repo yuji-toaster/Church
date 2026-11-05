@@ -70,7 +70,6 @@ Without a key, **Invite** and **Share this verse** use the phone's share sheet. 
 ## Known limits and next steps
 
 - **Moderation:** anyone with the link can post. Before sharing widely, add a pastor/admin role that can hide posts. The database rules are the place to enforce that.
-- **Korean Bible text:** the verses are KJV (public domain). The 개역개정 translation is copyrighted by the Korean Bible Society, so get permission before putting it in `verses.js`.
 - **Identity:** "mark answered" is tied to the browser that posted the request (an anonymous Firebase sign-in). If someone clears KakaoTalk's browser data, they lose the ability to mark their old requests answered. Kakao Login would fix this.
 - **Scale:** presence updates about 6 times per second per moving visitor. The free Firebase tier comfortably handles a small congregation (tens of people at once). For hundreds of people at once, you'd want a dedicated realtime server.
 - **No voice chat or live-stream screen yet.** Both are natural next features.
