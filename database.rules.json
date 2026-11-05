@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "prayers": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt"],
+      "$id": {
+        ".write": "auth != null && ((!data.exists() && newData.child('authorId').val() === auth.uid) || (data.exists() && !newData.exists() && data.child('authorId').val() === auth.uid))",
+        ".validate": "newData.hasChildren(['authorId', 'text', 'createdAt'])",
+        "authorId": { ".validate": "newData.isString()" },
+        "name": { ".validate": "newData.isString() && newData.val().length <= 24" },
+        "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+        "prayCount": {
+          ".write": "auth != null && data.exists() && newData.isNumber() && newData.val() === data.val() + 1",
+          ".validate": "newData.isNumber()"
+        },
+        "answered": {
+          ".write": "auth != null && data.parent().child('authorId').val() === auth.uid",
+          ".validate": "newData.isBoolean()"
+        },
+        "answeredAt": {
+          ".write": "auth != null && data.parent().child('authorId').val() === auth.uid",
+          ".validate": "newData.isNumber()"
+        },
+        "testimony": {
+          ".write": "auth != null && data.parent().child('authorId').val() === auth.uid",
+          ".validate": "newData.isString() && newData.val().length <= 500"
+        },
+        "$other": { ".validate": false }
+      }
+    },
+    "presence": {
+      ".read": "auth != null",
+      "$uid": { ".write": "auth != null && auth.uid === $uid" }
+    }
+  }
+}
