@@ -214,7 +214,7 @@ function frame() {
 }
 
 // ───────────────────────── Panels ─────────────────────────
-const panels = ['avatar', 'verse', 'prayers', 'answer'];
+const panels = ['avatar', 'verse', 'prayers', 'answer', 'private'];
 let enteredAt = 0;
 function closePanels() { me.showTag(false); panels.forEach(p => { $('#panel-' + p).hidden = true; }); uiOpen = false; interactBtn.hidden = !nearest; }
 function openPanel(name, opts = {}) {
@@ -269,6 +269,8 @@ $('#enter').addEventListener('click', () => {
     setTimeout(() => { hint.style.opacity = 0; }, 7000);
     if (store && store.mode === 'demo') $('#demo-banner').hidden = false;
     setTimeout(() => { $('#demo-banner').hidden = true; }, 8000);
+    if (store) notifyPrayedForMe();
+    handlePendingOpen();
   }
 });
 
@@ -282,7 +284,7 @@ $('#share-verse').addEventListener('click', () => share({
 }));
 
 // prayers panel
-let store = null, prayers = [], tab = 'active', answeringId = null;
+let store = null, prayers = [], tab = 'active', answering = null, highlightId = null;
 function setTab(name) {
   tab = name;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
@@ -292,61 +294,163 @@ function setTab(name) {
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 function timeAgo(ts) {
-  const s = Math.max(1, (Date.now() - ts) / 1000);
+  const s = Math.max(1, (Date.now() - (ts || Date.now())) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return Math.floor(s / 60) + 'm ago';
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 }
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const people = (n) => `${n} ${n === 1 ? 'person' : 'people'}`;
+const privateLink = (id) => `${pageUrl}#p=${id}`;
+
+function itemsForTab() {
+  const byAnswered = (a, b) => (b.answeredAt || 0) - (a.answeredAt || 0);
+  const flagged = (p) => p.hidden || p.reportCount > 0;
+  switch (tab) {
+    case 'answered': return prayers.filter(p => p.answered).sort(byAnswered);
+    case 'mine': return prayers.filter(p => p.mine);
+    case 'review': return prayers.filter(p => !p.private && flagged(p));
+    default: return prayers.filter(p => !p.answered);
+  }
+}
 
 function renderPrayers() {
   const list = $('#prayer-list'); list.innerHTML = '';
-  const items = tab === 'active' ? prayers.filter(p => !p.answered) : prayers.filter(p => p.answered).sort((a, b) => (b.answeredAt || 0) - (a.answeredAt || 0));
-  if (!items.length) { list.appendChild(el('li', 'empty', tab === 'active' ? 'No requests yet. Share the first one.' : 'No answered prayers yet. When God answers, mark your request as answered to encourage others.')); return; }
+  const reviewTab = document.querySelector('.tabs [data-tab=review]');
+  reviewTab.hidden = !(store && store.isAdmin);
+  const reviewCount = prayers.filter(p => !p.private && (p.hidden || p.reportCount > 0)).length;
+  reviewTab.textContent = 'Review' + (reviewCount ? ` (${reviewCount})` : '');
+
+  const mine = prayers.filter(p => p.mine);
+  const summary = $('#mine-summary');
+  summary.hidden = tab !== 'mine' || !mine.length;
+  if (!summary.hidden) {
+    const total = mine.reduce((n, p) => n + p.prayCount, 0);
+    summary.textContent = `🙏 ${people(total)} prayed for your ${mine.length === 1 ? 'request' : mine.length + ' requests'}.`;
+  }
+
+  const items = itemsForTab();
+  if (!items.length) {
+    const msg = {
+      active: 'No requests yet. Share the first one.',
+      answered: 'No answered prayers yet. When God answers, mark your request as answered to encourage others.',
+      mine: 'You haven\'t shared a request yet. Go to Requests to share one.',
+      review: 'Nothing to review. Reported and hidden posts show up here.',
+    }[tab];
+    list.appendChild(el('li', 'empty', msg)); return;
+  }
+
   for (const p of items) {
-    const li = el('li', 'prayer' + (p.answered ? ' answered' : ''));
+    const li = el('li', 'prayer' + (p.answered ? ' answered' : '') + (p.id === highlightId ? ' highlight' : ''));
+    li.dataset.id = p.id;
     const meta = el('div', 'meta');
-    meta.append(el('span', '', (p.name || 'Anonymous') + (p.mine ? ' (you)' : '')), el('span', '', p.answered ? 'Answered ' + timeAgo(p.answeredAt || p.createdAt) : timeAgo(p.createdAt)));
+    const who = el('span', '', (p.name || 'Anonymous') + (p.mine ? ' (you)' : ''));
+    if (p.private) who.append(el('span', 'badge', '🔒 Private'));
+    if (p.hidden) who.append(el('span', 'badge hidden-badge', 'Hidden'));
+    else if (p.reportCount >= 3 && (p.mine || store.isAdmin)) who.append(el('span', 'badge hidden-badge', 'Hidden by reports'));
+    meta.append(who, el('span', '', p.answered ? 'Answered ' + timeAgo(p.answeredAt || p.createdAt) : timeAgo(p.createdAt)));
     li.append(meta, el('p', 'text', p.text));
     if (p.answered && p.testimony) li.append(el('p', 'testimony', p.testimony));
+    if (p.mine) li.append(el('p', 'prayed-for-you', p.prayCount ? `🙏 ${people(p.prayCount)} prayed for you` : 'No one has prayed for this yet. ' + (p.private ? 'Send the link to the people you trust.' : 'They will soon.')));
+    if (store.isAdmin && p.reportCount) li.append(el('p', 'muted small', `⚑ Reported by ${people(p.reportCount)}`));
+
     const actions = el('div', 'actions');
-    const pray = el('button', p.iPrayed ? 'prayed' : '', (p.answered ? '🙌 ' : '🙏 ') + (p.iPrayed ? 'Prayed' : (p.answered ? 'Amen' : 'I prayed')) + ` · ${p.prayCount || 0}`);
-    pray.disabled = !!p.iPrayed;
-    pray.addEventListener('click', async () => { await store.prayFor(p.id).catch(err); toast(p.answered ? 'Amen!' : 'Thank you for praying 🙏'); });
-    actions.append(pray);
+    if (!p.mine) {
+      const pray = el('button', p.iPrayed ? 'prayed' : '', (p.answered ? '🙌 ' : '🙏 ') + (p.iPrayed ? 'Prayed' : (p.answered ? 'Amen' : 'Pray for this')) + ` · ${p.prayCount}`);
+      pray.disabled = !!p.iPrayed;
+      pray.addEventListener('click', async () => {
+        pray.disabled = true;
+        try { await store.prayFor(p); toast(p.answered ? 'Amen!' : 'Thank you for praying 🙏'); } catch (e) { err(e); pray.disabled = false; }
+      });
+      actions.append(pray);
+    }
+    if (p.mine && p.private) {
+      const sh = el('button', '', '🔗 Share link');
+      sh.addEventListener('click', () => showPrivateLink(p.id));
+      actions.append(sh);
+    }
     if (p.mine && !p.answered) {
       const ans = el('button', '', '✨ Mark answered');
-      ans.addEventListener('click', () => { answeringId = p.id; $('#testimony').value = ''; openPanel('answer'); });
+      ans.addEventListener('click', () => { answering = p; $('#testimony').value = ''; openPanel('answer'); });
       actions.append(ans);
     }
-    if (p.mine) {
+    if (!p.mine && !p.private) {
+      const rep = el('button', 'link', p.iReported ? 'Reported' : 'Report');
+      rep.disabled = p.iReported;
+      rep.addEventListener('click', async () => {
+        if (!confirm('Report this post as inappropriate? Posts reported by 3 people are hidden until a moderator reviews them.')) return;
+        await store.report(p).then(() => toast('Thanks — a moderator will review it')).catch(err);
+      });
+      actions.append(rep);
+    }
+    if (store.isAdmin && !p.private) {
+      const hide = el('button', 'link', p.hidden ? 'Unhide' : 'Hide');
+      hide.addEventListener('click', () => store.setHidden(p, !p.hidden).catch(err));
+      actions.append(hide);
+    }
+    if (p.mine || (store.isAdmin && !p.private)) {
       const del = el('button', 'link', 'Delete');
-      del.addEventListener('click', async () => { if (confirm('Delete this prayer request?')) await store.deletePrayer(p.id).catch(err); });
+      del.addEventListener('click', async () => { if (confirm('Delete this prayer request?')) await store.deletePrayer(p).catch(err); });
       actions.append(del);
     }
     li.append(actions);
     list.appendChild(li);
   }
+  if (highlightId) {
+    const h = list.querySelector('.highlight');
+    if (h) h.scrollIntoView({ block: 'center' });
+  }
 }
+
 $('#prayer-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = $('#prayer-text').value;
+  const visibility = document.querySelector('input[name=visibility]:checked').value;
   const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
   try {
-    await store.addPrayer({ name: profile.name, text, anonymous: $('#anon').checked });
+    if (!store) throw new Error('Still connecting… try again in a moment.');
+    const res = await store.addPrayer({ name: profile.name, text, anonymous: $('#anon').checked, visibility });
     $('#prayer-text').value = '';
-    toast('Your request is on the Prayer Wall');
+    if (res.private) showPrivateLink(res.id);
+    else toast('Your request is on the Prayer Wall');
   } catch (ex) { err(ex); }
   btn.disabled = false;
 });
+
+function showPrivateLink(id) {
+  openPanel('private');
+  $('#private-link').value = privateLink(id);
+  $('#private-link').dataset.id = id;
+}
+$('#private-link').addEventListener('focus', (e) => e.target.select());
+$('#private-send').addEventListener('click', () => {
+  const url = $('#private-link').value;
+  share({ title: 'Will you pray for me?', text: `${profile.name || 'A friend'} shared a private prayer request with you.`, url, button: 'Read & pray' });
+});
+$('#private-copy').addEventListener('click', () => copyText($('#private-link').value, 'Link copied — paste it to the people you trust'));
+
 $('#confirm-answer').addEventListener('click', async () => {
-  if (!answeringId) return;
-  await store.markAnswered(answeringId, $('#testimony').value).catch(err);
-  answeringId = null;
+  if (!answering) return;
+  await store.markAnswered(answering, $('#testimony').value).catch(err);
+  answering = null;
   openPanel('prayers', { tab: 'answered' });
   toast('Praise God! 🙌');
 });
+
+// "N people prayed for you since your last visit"
+let notifiedOnce = false;
+function notifyPrayedForMe() {
+  const mine = prayers.filter(p => p.mine);
+  const total = mine.reduce((n, p) => n + p.prayCount, 0);
+  const prev = Number(storage.getItem('church.seenPrayCount') || 0);
+  if (total > prev) {
+    const diff = total - prev;
+    setTimeout(() => toast(`🙏 ${people(diff)} prayed for you${notifiedOnce ? '' : ' since your last visit'}`), notifiedOnce ? 0 : 1200);
+  }
+  if (total !== prev) storage.setItem('church.seenPrayCount', String(total));
+  notifiedOnce = true;
+}
 
 // ───────────────────────── Sharing (KakaoTalk / share sheet / copy) ─────────────────────────
 const pageUrl = location.href.split('#')[0];
@@ -364,22 +468,24 @@ function loadKakao() {
   });
   return kakaoReady;
 }
-async function share({ title, text }) {
+async function share({ title, text, url = pageUrl, button = 'Enter the church' }) {
   if (await loadKakao()) {
     try {
       const img = document.querySelector('meta[property="og:image"]').content;
       window.Kakao.Share.sendDefault({
         objectType: 'feed',
-        content: { title, description: text.slice(0, 200), imageUrl: img, link: { mobileWebUrl: pageUrl, webUrl: pageUrl } },
-        buttons: [{ title: 'Enter the church', link: { mobileWebUrl: pageUrl, webUrl: pageUrl } }],
+        content: { title, description: text.slice(0, 200), imageUrl: img, link: { mobileWebUrl: url, webUrl: url } },
+        buttons: [{ title: button, link: { mobileWebUrl: url, webUrl: url } }],
       });
       return;
     } catch (e) { console.warn('Kakao share failed', e); }
   }
-  if (navigator.share) { try { await navigator.share({ title, text, url: pageUrl }); return; } catch (e) { if (e.name === 'AbortError') return; } }
-  const payload = `${text}\n${pageUrl}`;
-  try { await navigator.clipboard.writeText(payload); toast('Link copied — paste it into KakaoTalk'); }
-  catch { prompt('Copy this link:', payload); }
+  if (navigator.share) { try { await navigator.share({ title, text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  copyText(`${text}\n${url}`, 'Link copied — paste it into KakaoTalk');
+}
+async function copyText(textToCopy, okMsg) {
+  try { await navigator.clipboard.writeText(textToCopy); toast(okMsg); }
+  catch { prompt('Copy this:', textToCopy); }
 }
 function shareInvite() {
   share({ title: CFG.churchName || 'Metaverse Church', text: 'Come walk through our church with me, share a prayer request, and read today\'s verse.' });
@@ -397,9 +503,37 @@ uiOpen = true;
 requestAnimationFrame(frame);
 setTimeout(() => { $('#loading').classList.add('fade'); }, 300);
 
-createStore().then((s) => {
+// Links: #p=<id> opens a private prayer someone shared; #whoami shows your user ID (for admin setup)
+const hashParams = new URLSearchParams(location.hash.slice(1));
+const sharedPrivateId = hashParams.get('p');
+
+createStore().then(async (s) => {
   store = s;
-  store.onPrayers((list) => { prayers = list; church.setPrayers(list); if (!$('#panel-prayers').hidden) renderPrayers(); });
+  store.onPrayers((list) => {
+    prayers = list;
+    church.setPrayers(list.filter(p => !p.private && !p.hidden && p.reportCount < 3));
+    if (!$('#panel-prayers').hidden) renderPrayers();
+    if (enteredAt) notifyPrayedForMe();
+  });
   store.onPresence(syncOthers);
   if (enteredAt && store.mode === 'demo') $('#demo-banner').hidden = false;
+  if (sharedPrivateId) {
+    const ok = await store.openPrivate(sharedPrivateId);
+    history.replaceState(null, '', location.pathname + location.search);
+    pendingOpen = ok ? sharedPrivateId : 'missing';
+    if (enteredAt) handlePendingOpen();
+  }
+  if (hashParams.has('whoami')) copyText(store.userId, `Your user ID was copied: ${store.userId}`);
 }).catch(err);
+
+let pendingOpen = null;
+function handlePendingOpen() {
+  if (!pendingOpen) return;
+  if (pendingOpen === 'missing') toast('That private prayer link has expired or was deleted.');
+  else {
+    highlightId = pendingOpen;
+    openPanel('prayers', { tab: 'active' });
+    toast('A friend shared a private prayer request with you 🙏');
+  }
+  pendingOpen = null;
+}

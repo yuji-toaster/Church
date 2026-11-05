@@ -4,8 +4,14 @@ A small 3D church you can open from a link, including from inside KakaoTalk. Vis
 
 - **pick an avatar** (name, outfit, skin, hair, style, accessory)
 - **walk around** the nave, aisle, altar, pews and stained-glass windows (WASD/arrow keys, or an on-screen joystick on phones)
-- **share prayer requests** on the Prayer Wall, tap "I prayed" on other people's requests, and post anonymously if they want
+- **share prayer requests**, choosing who sees each one:
+  - **Everyone**: it goes on the Prayer Wall for the whole church.
+  - **Only people I choose**: it stays off the wall. The author gets a private link to send in KakaoTalk to the people they pick.
+  - Either way, they can **hide their name** (anonymous).
+- **pray for a request** with one tap. Each person counts once.
+- **see how many people prayed for them**: the "Mine" tab shows the count on each request, and returning visitors get a "3 people prayed for you since your last visit" message
 - **mark their own request as answered**, with an optional testimony. It then moves to the Answered Prayers wall.
+- **report** an inappropriate post. A post reported by 3 people is hidden until a moderator reviews it.
 - **read today's verse**, which rises out of the open Bible on the lectern. Everyone sees the same verse on the same day, and it changes daily.
 - **see other visitors** walking around in real time (needs live mode, see below)
 - **invite friends** through KakaoTalk, the phone's share sheet, or a copied link
@@ -49,6 +55,24 @@ Out of the box it runs in **demo mode**. Prayers are stored only in the visitor'
 2. Merge to `main`. The workflow in `.github/workflows/pages.yml` publishes the site to `https://yuji-toaster.github.io/Church/`.
 3. If you host it at a different URL, update `og:image` and `og:url` in `index.html`. KakaoTalk's preview needs absolute URLs. KakaoTalk caches previews; to refresh one, use the Kakao developers cache tool: https://developers.kakao.com/tool/debugger/sharing
 
+## Moderators
+
+Moderators get a **Review** tab listing reported and hidden posts. From there they can hide, unhide or delete any public post. Private requests are never shown to moderators unless someone sent them the link.
+
+To make someone a moderator in live mode:
+
+1. On the moderator's phone, open the site with `#whoami` at the end of the address, e.g. `https://yuji-toaster.github.io/Church/#whoami`. Their user ID is copied and shown on screen.
+2. In the Firebase console → Realtime Database, add a node `admins/<that user ID>` with the value `true`.
+3. Reload the site on that phone. The Review tab appears.
+
+In demo mode, add `?admin` to the address to try the moderator tools.
+
+Note that the ID belongs to that phone's browser. If they clear KakaoTalk's browser data, repeat these steps.
+
+## How private prayers are protected
+
+A private request is stored at a random, 22-character address. The database refuses to list those addresses, so the only way to read a private request is to have its link. That makes it like an unlisted video: **anyone the link is forwarded to can read it.** The app warns the author about this when it shows the link. Authors can delete a private request at any time.
+
 ## Kakao share button (optional)
 
 1. Go to https://developers.kakao.com and choose **My Application → Add application**.
@@ -69,7 +93,7 @@ Without a key, **Invite** and **Share this verse** use the phone's share sheet. 
 
 ## Known limits and next steps
 
-- **Moderation:** anyone with the link can post. Before sharing widely, add a pastor/admin role that can hide posts. The database rules are the place to enforce that.
-- **Identity:** "mark answered" is tied to the browser that posted the request (an anonymous Firebase sign-in). If someone clears KakaoTalk's browser data, they lose the ability to mark their old requests answered. Kakao Login would fix this.
+- **Moderation is after the fact:** posts appear immediately and are hidden only after reports or a moderator's action. If you want every public post approved before it appears, that's a small change.
+- **Identity:** there are no accounts. Each phone's browser gets an anonymous ID, and "Mine", prayer counts, "mark answered" and the private requests you've received are all tied to that ID. If someone clears KakaoTalk's browser data or switches phones, they lose access to those. Kakao Login would fix this.
 - **Scale:** presence updates about 6 times per second per moving visitor. The free Firebase tier comfortably handles a small congregation (tens of people at once). For hundreds of people at once, you'd want a dedicated realtime server.
 - **No voice chat or live-stream screen yet.** Both are natural next features.

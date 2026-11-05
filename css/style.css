@@ -106,3 +106,19 @@ textarea { resize: none; }
 .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
 
 .toast { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); background: rgba(28,20,14,.9); color: #fff; padding: 12px 18px; border-radius: 12px; z-index: 40; font-size: 14px; text-align: center; max-width: 80vw; }
+
+.secondary { border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 11px 16px; font-weight: 600; color: var(--ink); }
+.tabs button { padding: 8px 4px; font-size: 14px; }
+.visibility { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.visibility label { cursor: pointer; }
+.visibility input { position: absolute; opacity: 0; pointer-events: none; }
+.visibility span { display: grid; gap: 2px; border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 8px 10px; font-size: 13px; height: 100%; }
+.visibility small { color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+.visibility input:checked + span { border-color: var(--gold); background: var(--gold-soft); }
+.visibility input:focus-visible + span { outline: 2px solid var(--gold); }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #efe3ff; color: #5a2d91; margin-left: 6px; }
+.badge.hidden-badge { background: #ffe1e1; color: #8e1b22; }
+.prayed-for-you { font-size: 13px; font-weight: 700; color: #7a5410; background: rgba(232,184,58,.16); border-radius: 8px; padding: 6px 10px; margin: 0 0 10px; }
+.mine-summary { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--gold-soft); font-size: 14px; }
+.prayer.highlight { box-shadow: 0 0 0 3px var(--gold); }
+#private-link { font-size: 13px; color: var(--muted); }

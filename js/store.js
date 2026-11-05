@@ -1,107 +1,162 @@
 // Data layer. Two interchangeable backends with the same interface:
-//   LocalStore    – demo mode, no server. Prayers live in localStorage; presence
-//                   is shared between tabs of the same browser via BroadcastChannel.
-//   FirebaseStore – real mode. Prayers + live presence in Firebase Realtime Database.
+//   LocalStore    – demo mode, no server. Everything lives in this browser's
+//                   localStorage; presence is shared between tabs via BroadcastChannel.
+//   FirebaseStore – live mode. Prayers + presence in Firebase Realtime Database.
 //
-// Interface:
-//   await store.init()            -> resolves with this.userId
-//   store.onPrayers(cb)           cb(list) on every change, newest first
-//   store.addPrayer({name, text, anonymous})
-//   store.prayFor(id)
-//   store.markAnswered(id, testimony)
-//   store.deletePrayer(id)        author only
-//   store.updatePresence(state)   {name, avatar, x, y, z, ry, moving}
-//   store.onPresence(cb)          cb(mapOfOthers) {id: state}
-//   store.mode                    'demo' | 'live'
+// Prayer visibility:
+//   public  – stored under /prayers, listed for everyone, shown on the 3D wall.
+//   private – stored under /private/<random id>. It can't be listed; it can only be
+//             read by someone who knows the id, i.e. who received the share link.
+//
+// Interface (p = a prayer object from onPrayers):
+//   await store.init()                  -> this.userId, this.isAdmin
+//   store.onPrayers(cb)                 cb(list): public + private ones this device knows
+//   store.addPrayer({name, text, anonymous, visibility}) -> {id, private}
+//   store.openPrivate(id)               remember a private prayer received by link
+//   store.prayFor(p) / markAnswered(p, testimony) / deletePrayer(p)
+//   store.report(p) / setHidden(p, hidden)   (setHidden is admin only)
+//   store.updatePresence(state) / onPresence(cb)
+//   store.mode                          'demo' | 'live'
 
 const MAX_TEXT = 500;
+export const REPORT_HIDE_THRESHOLD = 3;
 const clean = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-function randomId() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+// 20+ chars from a CSPRNG: private prayers are protected only by being unguessable.
+export function secureId(len = 22) {
+  const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => abc[b % abc.length]).join('');
 }
 
 function safeStorage() {
   try { const k = '__t'; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; }
   catch { const m = {}; return { getItem: k => m[k] ?? null, setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; }
 }
+const readJSON = (ls, k, d) => { try { return JSON.parse(ls.getItem(k)) ?? d; } catch { return d; } };
 
-// ───────────────────────────── Demo backend ─────────────────────────────
-class LocalStore {
+// Shared bookkeeping for both backends.
+class BaseStore {
   constructor() {
-    this.mode = 'demo';
     this.ls = safeStorage();
+    this.publicList = [];
+    this.privateMap = {};
     this.prayerCbs = [];
     this.presenceCbs = [];
-    this.others = {};
-    this.lastSeen = {};
+    this.known = new Set(readJSON(this.ls, 'church.knownPrivate', []));
+    this.isAdmin = false;
   }
+  _saveKnown() { this.ls.setItem('church.knownPrivate', JSON.stringify([...this.known])); }
+
+  _decorate(p, isPrivate) {
+    const prayedBy = p.prayedBy || {}, reports = p.reports || {};
+    return {
+      ...p, private: isPrivate,
+      mine: p.authorId === this.userId,
+      iPrayed: !!prayedBy[this.userId],
+      prayCount: p.prayCount || 0,
+      reportCount: Object.keys(reports).length,
+      iReported: !!reports[this.userId],
+    };
+  }
+  _emitPrayers() {
+    const list = [
+      ...this.publicList.map(p => this._decorate(p, false)),
+      ...Object.values(this.privateMap).map(p => this._decorate(p, true)),
+    ].filter(p => this.isAdmin || p.mine || !(p.hidden || p.reportCount >= REPORT_HIDE_THRESHOLD));
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    this.prayerCbs.forEach(cb => cb(list));
+  }
+  onPrayers(cb) { this.prayerCbs.push(cb); this._emitPrayers(); }
+  onPresence(cb) { this.presenceCbs.push(cb); }
+
+  _newPrayer({ name, text, anonymous }) {
+    text = clean(text, MAX_TEXT);
+    if (!text) throw new Error('Please write a prayer request.');
+    return { authorId: this.userId, name: anonymous ? '' : clean(name, 24), text, prayCount: 0, answered: false };
+  }
+}
+
+// ───────────────────────────── Demo backend ─────────────────────────────
+class LocalStore extends BaseStore {
+  constructor() { super(); this.mode = 'demo'; this.others = {}; this.lastSeen = {}; }
 
   async init() {
-    this.userId = this.ls.getItem('church.userId') || randomId();
+    this.userId = this.ls.getItem('church.userId') || secureId(12);
     this.ls.setItem('church.userId', this.userId);
-    this.prayed = new Set(JSON.parse(this.ls.getItem('church.prayed') || '[]'));
-    if (!this.ls.getItem('church.prayers')) this._save(seedPrayers());
-    try {
-      this.bc = new BroadcastChannel('church');
-      this.bc.onmessage = (e) => this._onMessage(e.data);
-    } catch { this.bc = null; }
-    window.addEventListener('storage', (e) => { if (e.key === 'church.prayers') this._emitPrayers(); });
+    // demo only: add ?admin to the URL to try the moderator tools
+    this.isAdmin = /[?&]admin\b/.test(location.search);
+    if (!this.ls.getItem('church.prayers')) this.ls.setItem('church.prayers', JSON.stringify(seedPrayers()));
+    try { this.bc = new BroadcastChannel('church'); this.bc.onmessage = (e) => this._onMessage(e.data); } catch { this.bc = null; }
+    window.addEventListener('storage', (e) => { if (e.key === 'church.prayers' || e.key === 'church.privateDb') this._reload(); });
     window.addEventListener('beforeunload', () => this.bc && this.bc.postMessage({ type: 'leave', id: this.userId }));
     setInterval(() => this._expire(), 1000);
+    this._reload(false);
     return this.userId;
   }
 
-  _load() { try { return JSON.parse(this.ls.getItem('church.prayers') || '[]'); } catch { return []; } }
-  _save(list) { this.ls.setItem('church.prayers', JSON.stringify(list)); }
-  _emitPrayers() {
-    const list = this._load().sort((a, b) => b.createdAt - a.createdAt);
-    list.forEach(p => { p.mine = p.authorId === this.userId; p.iPrayed = this.prayed.has(p.id); });
-    this.prayerCbs.forEach(cb => cb(list));
+  _db() { return { pub: readJSON(this.ls, 'church.prayers', []), priv: readJSON(this.ls, 'church.privateDb', {}) }; }
+  _reload(emit = true) {
+    const { pub, priv } = this._db();
+    this.publicList = pub;
+    this.privateMap = {};
+    for (const id of this.known) if (priv[id]) this.privateMap[id] = { ...priv[id], id };
+    if (emit) this._emitPrayers();
   }
-  _mutate(fn) {
-    const list = this._load(); fn(list); this._save(list); this._emitPrayers();
+  _mutate(p, fn) {
+    const { pub, priv } = this._db();
+    const target = p.private ? priv[p.id] : pub.find(x => x.id === p.id);
+    if (!target) return;
+    const res = fn(target);
+    if (res === 'delete') { if (p.private) delete priv[p.id]; else pub.splice(pub.indexOf(target), 1); }
+    this._commit(pub, priv);
+  }
+  _commit(pub, priv) {
+    this.ls.setItem('church.prayers', JSON.stringify(pub));
+    this.ls.setItem('church.privateDb', JSON.stringify(priv));
+    this._reload();
     this.bc && this.bc.postMessage({ type: 'prayers' });
   }
 
-  onPrayers(cb) { this.prayerCbs.push(cb); this._emitPrayers(); }
-
-  async addPrayer({ name, text, anonymous }) {
-    text = clean(text, MAX_TEXT);
-    if (!text) throw new Error('Please write a prayer request.');
-    this._mutate(list => list.push({
-      id: randomId(), authorId: this.userId,
-      name: anonymous ? '' : clean(name, 24), text,
-      createdAt: Date.now(), prayCount: 0, answered: false,
-    }));
+  async addPrayer(input) {
+    const p = { ...this._newPrayer(input), createdAt: Date.now() };
+    const { pub, priv } = this._db();
+    const isPrivate = input.visibility === 'private';
+    const id = secureId(isPrivate ? 22 : 10);
+    if (isPrivate) { priv[id] = p; this.known.add(id); this._saveKnown(); }
+    else pub.push({ ...p, id });
+    this._commit(pub, priv);
+    return { id, private: isPrivate };
   }
 
-  async prayFor(id) {
-    if (this.prayed.has(id)) return;
-    this.prayed.add(id);
-    this.ls.setItem('church.prayed', JSON.stringify([...this.prayed]));
-    this._mutate(list => { const p = list.find(x => x.id === id); if (p) p.prayCount = (p.prayCount || 0) + 1; });
+  async openPrivate(id) {
+    if (!/^[A-Za-z0-9]{20,40}$/.test(id)) return false;
+    this.known.add(id); this._saveKnown(); this._reload();
+    return !!this.privateMap[id];
   }
 
-  async markAnswered(id, testimony) {
-    this._mutate(list => {
-      const p = list.find(x => x.id === id);
-      if (p && p.authorId === this.userId) { p.answered = true; p.answeredAt = Date.now(); p.testimony = clean(testimony, MAX_TEXT); }
+  async prayFor(p) {
+    this._mutate(p, t => {
+      t.prayedBy = t.prayedBy || {};
+      if (t.prayedBy[this.userId]) return;
+      t.prayedBy[this.userId] = true; t.prayCount = (t.prayCount || 0) + 1;
     });
   }
-
-  async deletePrayer(id) {
-    this._mutate(list => { const i = list.findIndex(x => x.id === id && x.authorId === this.userId); if (i >= 0) list.splice(i, 1); });
+  async markAnswered(p, testimony) {
+    this._mutate(p, t => { if (t.authorId === this.userId) Object.assign(t, { answered: true, answeredAt: Date.now(), testimony: clean(testimony, MAX_TEXT) }); });
   }
-
-  updatePresence(state) {
-    this.bc && this.bc.postMessage({ type: 'pos', id: this.userId, state });
+  async deletePrayer(p) {
+    this._mutate(p, t => (t.authorId === this.userId || this.isAdmin ? 'delete' : null));
+    if (p.private) { this.known.delete(p.id); this._saveKnown(); }
   }
-  onPresence(cb) { this.presenceCbs.push(cb); }
+  async report(p) { this._mutate(p, t => { t.reports = t.reports || {}; t.reports[this.userId] = true; }); }
+  async setHidden(p, hidden) { if (this.isAdmin) this._mutate(p, t => { t.hidden = hidden; }); }
 
+  updatePresence(state) { this.bc && this.bc.postMessage({ type: 'pos', id: this.userId, state }); }
   _onMessage(msg) {
     if (!msg) return;
-    if (msg.type === 'prayers') this._emitPrayers();
+    if (msg.type === 'prayers') this._reload();
     else if (msg.type === 'pos') { this.others[msg.id] = msg.state; this.lastSeen[msg.id] = Date.now(); this._emitPresence(); }
     else if (msg.type === 'leave') { delete this.others[msg.id]; this._emitPresence(); }
   }
@@ -125,8 +180,8 @@ function seedPrayers() {
 // ───────────────────────────── Firebase backend ─────────────────────────────
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
 
-class FirebaseStore {
-  constructor(config) { this.config = config; this.mode = 'live'; this.ls = safeStorage(); }
+class FirebaseStore extends BaseStore {
+  constructor(config) { super(); this.config = config; this.mode = 'live'; this.privSubs = {}; }
 
   async init() {
     const [{ initializeApp }, auth, db] = await Promise.all([
@@ -134,71 +189,83 @@ class FirebaseStore {
     ]);
     this.db = db;
     const app = initializeApp(this.config);
-    const a = auth.getAuth(app);
-    const cred = await auth.signInAnonymously(a);
+    const cred = await auth.signInAnonymously(auth.getAuth(app));
     this.userId = cred.user.uid;
     this.database = db.getDatabase(app);
-    this.prayed = new Set(JSON.parse(this.ls.getItem('church.prayed') || '[]'));
+    try { this.isAdmin = (await db.get(db.ref(this.database, 'admins/' + this.userId))).val() === true; } catch { this.isAdmin = false; }
 
     this.presenceRef = db.ref(this.database, 'presence/' + this.userId);
     db.onDisconnect(this.presenceRef).remove();
+
+    const { ref, query, orderByChild, limitToLast, onValue } = db;
+    onValue(query(ref(this.database, 'prayers'), orderByChild('createdAt'), limitToLast(300)), snap => {
+      const list = [];
+      snap.forEach(child => { list.push({ ...child.val(), id: child.key }); });
+      this.publicList = list;
+      this._emitPrayers();
+    });
+    for (const id of this.known) this._subscribePrivate(id);
     return this.userId;
   }
 
-  onPrayers(cb) {
-    const { ref, query, orderByChild, limitToLast, onValue } = this.db;
-    const q = query(ref(this.database, 'prayers'), orderByChild('createdAt'), limitToLast(200));
-    onValue(q, snap => {
-      const list = [];
-      snap.forEach(child => { const p = child.val(); p.id = child.key; p.mine = p.authorId === this.userId; p.iPrayed = this.prayed.has(p.id); list.push(p); });
-      list.sort((a, b) => b.createdAt - a.createdAt);
-      cb(list);
-    });
+  _path(p) { return (p.private ? 'private/' : 'prayers/') + p.id; }
+  _ref(path) { return this.db.ref(this.database, path); }
+
+  _subscribePrivate(id) {
+    if (this.privSubs[id]) return;
+    this.privSubs[id] = this.db.onValue(this._ref('private/' + id), snap => {
+      if (snap.exists()) this.privateMap[id] = { ...snap.val(), id };
+      else { delete this.privateMap[id]; this.known.delete(id); this._saveKnown(); }
+      this._emitPrayers();
+    }, () => { delete this.privateMap[id]; this._emitPrayers(); });
   }
 
-  async addPrayer({ name, text, anonymous }) {
-    text = clean(text, MAX_TEXT);
-    if (!text) throw new Error('Please write a prayer request.');
-    const { ref, push, set, serverTimestamp } = this.db;
-    await set(push(ref(this.database, 'prayers')), {
-      authorId: this.userId, name: anonymous ? '' : clean(name, 24), text,
-      createdAt: serverTimestamp(), prayCount: 0, answered: false,
-    });
+  async addPrayer(input) {
+    const p = { ...this._newPrayer(input), createdAt: this.db.serverTimestamp() };
+    const isPrivate = input.visibility === 'private';
+    if (isPrivate) {
+      const id = secureId(22);
+      await this.db.set(this._ref('private/' + id), p);
+      this.known.add(id); this._saveKnown(); this._subscribePrivate(id);
+      return { id, private: true };
+    }
+    const r = this.db.push(this._ref('prayers'));
+    await this.db.set(r, p);
+    return { id: r.key, private: false };
   }
 
-  async prayFor(id) {
-    if (this.prayed.has(id)) return;
-    this.prayed.add(id);
-    this.ls.setItem('church.prayed', JSON.stringify([...this.prayed]));
-    const { ref, update, increment } = this.db;
-    await update(ref(this.database, 'prayers/' + id), { prayCount: increment(1) });
+  async openPrivate(id) {
+    if (!/^[A-Za-z0-9]{20,40}$/.test(id)) return false;
+    const snap = await this.db.get(this._ref('private/' + id)).catch(() => null);
+    if (!snap || !snap.exists()) return false;
+    this.known.add(id); this._saveKnown(); this._subscribePrivate(id);
+    return true;
   }
 
-  async markAnswered(id, testimony) {
-    const { ref, update, serverTimestamp } = this.db;
-    await update(ref(this.database, 'prayers/' + id), { answered: true, answeredAt: serverTimestamp(), testimony: clean(testimony, MAX_TEXT) });
+  async prayFor(p) {
+    if (p.iPrayed) return;
+    await this.db.update(this._ref(this._path(p)), { prayCount: this.db.increment(1), ['prayedBy/' + this.userId]: true });
   }
-
-  async deletePrayer(id) {
-    const { ref, remove } = this.db;
-    await remove(ref(this.database, 'prayers/' + id));
+  async markAnswered(p, testimony) {
+    await this.db.update(this._ref(this._path(p)), { answered: true, answeredAt: this.db.serverTimestamp(), testimony: clean(testimony, MAX_TEXT) });
   }
+  async deletePrayer(p) {
+    await this.db.remove(this._ref(this._path(p)));
+    if (p.private) { this.known.delete(p.id); this._saveKnown(); }
+  }
+  async report(p) { await this.db.set(this._ref(this._path(p) + '/reports/' + this.userId), true); }
+  async setHidden(p, hidden) { await this.db.set(this._ref(this._path(p) + '/hidden'), !!hidden); }
 
   updatePresence(state) {
-    const { set, serverTimestamp } = this.db;
-    set(this.presenceRef, { ...state, t: serverTimestamp() }).catch(() => {});
+    this.db.set(this.presenceRef, { ...state, t: this.db.serverTimestamp() }).catch(() => {});
   }
-
   onPresence(cb) {
-    const { ref, onValue } = this.db;
-    onValue(ref(this.database, 'presence'), snap => {
-      const others = {};
-      const cutoff = Date.now() - 60000;
-      snap.forEach(child => {
-        const v = child.val();
-        if (child.key !== this.userId && v && (!v.t || v.t > cutoff)) others[child.key] = v;
-      });
-      cb(others);
+    super.onPresence(cb);
+    if (this.presenceSub) return;
+    this.presenceSub = this.db.onValue(this._ref('presence'), snap => {
+      const others = {}, cutoff = Date.now() - 60000;
+      snap.forEach(child => { const v = child.val(); if (child.key !== this.userId && v && (!v.t || v.t > cutoff)) others[child.key] = v; });
+      this.presenceCbs.forEach(f => f(others));
     });
   }
 }

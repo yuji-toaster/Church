@@ -75,17 +75,37 @@
   <section id="panel-prayers" class="sheet tall" hidden>
     <button class="close" aria-label="Close">×</button>
     <div class="tabs" role="tablist">
-      <button role="tab" data-tab="active" class="on">Prayer requests</button>
+      <button role="tab" data-tab="active" class="on">Requests</button>
       <button role="tab" data-tab="answered">Answered 🙌</button>
+      <button role="tab" data-tab="mine">Mine</button>
+      <button role="tab" data-tab="review" hidden>Review</button>
     </div>
+    <p id="mine-summary" class="mine-summary" hidden></p>
     <form id="prayer-form" class="prayer-form">
       <textarea id="prayer-text" maxlength="500" rows="3" placeholder="What can we pray for?" required></textarea>
+      <div class="visibility" role="radiogroup" aria-label="Who can see this">
+        <label><input type="radio" name="visibility" value="public" checked /><span><b>🌍 Everyone</b><small>On the Prayer Wall for the whole church</small></span></label>
+        <label><input type="radio" name="visibility" value="private" /><span><b>🔒 Only people I choose</b><small>You get a private link to send them</small></span></label>
+      </div>
       <div class="row between">
-        <label class="check"><input type="checkbox" id="anon" /> Post anonymously</label>
+        <label class="check"><input type="checkbox" id="anon" /> Hide my name (anonymous)</label>
         <button class="primary" type="submit">Share request</button>
       </div>
     </form>
     <ul id="prayer-list" class="prayer-list"></ul>
+  </section>
+
+  <!-- Private link -->
+  <section id="panel-private" class="sheet" hidden>
+    <button class="close" aria-label="Close">×</button>
+    <h2>🔒 Private request saved</h2>
+    <p class="muted">It isn't on the Prayer Wall. Send this link only to the people you want praying with you. You'll see how many of them prayed.</p>
+    <input id="private-link" readonly />
+    <div class="row">
+      <button id="private-send" class="primary">Send in KakaoTalk / share</button>
+      <button id="private-copy" class="secondary">Copy link</button>
+    </div>
+    <p class="muted small">Anyone who has this link can read the request, so only send it to people you trust. You can delete the request at any time.</p>
   </section>
 
   <!-- Mark answered -->
